@@ -1,200 +1,258 @@
-\# HACKPRENEUR
+# HACKPRENEUR
 
+<p align="center">
+  <strong>From Hackathon Prototype to Real-World Product.</strong>
+  <br />
+  Build. Collaborate. Continue.
+</p>
 
+<p align="center">
+  <a href="https://github.com/Adityadevhare/hackpreneur">
+    <img src="https://img.shields.io/badge/Project-HACKPRENEUR-20232A?style=for-the-badge" alt="HACKPRENEUR" />
+  </a>
+  <img src="https://img.shields.io/badge/Status-Active%20Development-2E8B57?style=for-the-badge" alt="Active Development" />
+  <img src="https://img.shields.io/badge/Backend-FastAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white" alt="FastAPI" />
+  <img src="https://img.shields.io/badge/Frontend-React-20232A?style=for-the-badge&logo=react" alt="React" />
+</p>
 
-\*\*From Hackathon Prototype to Real-World Product\*\*
+---
 
+## The Idea
 
+**A hackathon should not be the end of a project. It should be the beginning.**
 
-HACKPRENEUR is a platform designed to help hackathon teams continue developing their prototypes after the event. It aims to support project readiness, milestone planning, feedback, and connections with relevant mentors and communities.
+Hackathons bring together ambitious people, creative ideas, and promising prototypes. But once the event ends, teams often struggle to maintain momentum, find collaborators, access mentorship, and turn their prototypes into sustainable products.
 
+HACKPRENEUR aims to bridge that gap.
 
+It is being developed as a collaborative platform where participants can discover opportunities, build teams, manage projects, connect with mentors, and continue working beyond the event.
 
-\## Tech Stack
+## The Three Pillars
 
+<table>
+  <tr>
+    <td width="33%" valign="top">
+      <h3>Connect</h3>
+      Discover participants, teams, hackathons, mentors, and opportunities.
+    </td>
+    <td width="33%" valign="top">
+      <h3>Collaborate</h3>
+      Build projects, coordinate with teammates, and share work with authorized collaborators.
+    </td>
+    <td width="33%" valign="top">
+      <h3>Continue</h3>
+      Preserve project ownership, relationships, and progress beyond hackathon deadlines.
+    </td>
+  </tr>
+</table>
 
+## What We're Building
 
-\### Frontend
+HACKPRENEUR is being developed around a set of connected capabilities:
 
-\- React
+- **Project Management** — Create and manage projects with individual or team ownership.
+- **Team Collaboration** — Support team membership, administration, and delegated permissions.
+- **Project Visibility** — Public, unlisted, and private project access.
+- **Ownership Management** — Preserve creator attribution and support ownership transitions.
+- **Role-Based Access** — Separate platform roles, event assignments, and project permissions.
+- **Secure Authentication** — Authenticated access using Supabase Auth and backend JWT verification.
+- **GitHub Integration** — Planned repository connectivity through a GitHub App with selected-repository access.
 
-\- TypeScript
+> Features are being developed incrementally. Planned capabilities are not represented as completed functionality.
 
-\- Vite
+## Technology Stack
 
-\- CSS
+### Frontend
 
+| Technology | Purpose |
+|---|---|
+| React | User interface |
+| TypeScript | Type safety |
+| Vite | Development and build tooling |
+| CSS | Styling |
+| Supabase JS | Authentication client |
 
+### Backend
 
-\### Backend
+| Technology | Purpose |
+|---|---|
+| Python | Backend language |
+| FastAPI | REST API |
+| SQLAlchemy | Database ORM |
+| Alembic | Database migrations |
+| Pydantic | Data validation |
+| HTTPX | HTTP client |
+| Cryptography | Security-related cryptographic operations |
 
-\- Python
+### Database & Infrastructure
 
-\- FastAPI
+| Technology | Purpose |
+|---|---|
+| Supabase PostgreSQL | Primary database |
+| Supabase Auth | Authentication |
+| PostgreSQL RLS | Database-level access control |
+| JWT / JWKS | Backend token verification |
+| Fernet | Planned encrypted credential storage for integrations |
 
-\- SQLAlchemy
+## Architecture
 
-\- SQLite
+The platform separates authentication, application authorization, and database access control.
 
-\- Pydantic
+```mermaid
+flowchart TD
+    A[React + TypeScript Frontend] --> B[Supabase Auth]
+    A --> C[FastAPI Backend]
+    B --> C
+    C --> D[JWT Verification]
+    D --> E[Application Authorization]
+    E --> F[SQLAlchemy]
+    F --> G[PostgreSQL]
+    G --> H[Row Level Security]
+```
 
+### Security Principles
 
+Security is part of the architecture, not an afterthought.
 
-\## Project Structure
+- Verify Supabase-issued JWTs on the backend.
+- Keep authorization decisions on the server.
+- Separate platform roles from authentication-provider roles.
+- Enforce ownership and permissions at the application and database levels.
+- Use transaction-local user context for PostgreSQL RLS.
+- Keep privileged database credentials separate from runtime database access.
+- Apply least-privilege access to project and integration permissions.
 
+## Current Implementation
 
+The project is under active development.
+
+| Area | Status |
+|---|---|
+| Authentication foundation | Implemented |
+| Frontend authentication integration | Implemented |
+| Backend JWT verification | Implemented |
+| PostgreSQL integration | Implemented |
+| Project ownership model | Implemented |
+| Project visibility controls | Implemented |
+| Project soft deletion and restoration | Implemented |
+| PostgreSQL RLS for projects | Implemented |
+| Authenticated frontend project API integration | Implemented |
+| GitHub App integration | Planned |
+| Team collaboration workflows | Planned |
+| Event and mentor workflows | Planned |
+| AI-assisted project capabilities | Planned |
+
+Implementation status reflects the current development milestones and may change as the codebase evolves.
+
+## Repository Structure
 
 ```text
-
 hackpreneur/
-
 ├── backend/
-
-│   ├── database.py
-
-│   ├── init\_db.py
-
-│   ├── main.py
-
-│   ├── models.py
-
-│   └── requirements.txt
-
+│   ├── Authentication and API logic
+│   ├── Database models and configuration
+│   ├── Database migrations
+│   └── Tests
+│
 ├── frontend/
-
-│   ├── public/
-
-│   ├── src/
-
-│   ├── package.json
-
-│   └── vite.config.ts
-
-├── .gitignore
-
+│   ├── React application
+│   ├── Components and pages
+│   └── API and authentication integration
+│
 └── README.md
-
 ```
 
+## Getting Started
 
+### Prerequisites
 
-\## Getting Started
+- Python 3.10+
+- Node.js and npm
+- A Supabase project with PostgreSQL
+- Git
 
-
-
-\### Prerequisites
-
-\- Python 3.10 or later
-
-\- Node.js and npm
-
-
-
-\### 1. Clone the repository
-
-
+### 1. Clone the repository
 
 ```bash
-
-git clone <YOUR\_REPOSITORY\_URL>
-
+git clone https://github.com/Adityadevhare/hackpreneur.git
 cd hackpreneur
-
 ```
 
+### 2. Configure the environment
 
+Configure the backend and frontend environment variables using the project's environment templates and configuration.
 
-\### 2. Start the backend
+Keep credentials, database passwords, signing keys, and other secrets out of source control.
 
+### 3. Start the backend
 
+Follow the backend dependency and environment setup, then start the FastAPI application using its configured ASGI entry point.
 
-Open a terminal:
+The interactive API documentation is available at:
 
-
-
-```powershell
-
-cd backend
-
-python -m venv .venv
-
-.\\.venv\\Scripts\\Activate.ps1
-
-python -m pip install -r requirements.txt
-
-python init\_db.py
-
-uvicorn main:app --reload
-
+```text
+http://127.0.0.1:8000/docs
 ```
 
+### 4. Start the frontend
 
-
-Backend: `http://127.0.0.1:8000`
-
-
-
-API documentation: `http://127.0.0.1:8000/docs`
-
-
-
-\### 3. Start the frontend
-
-
-
-Open a second terminal from the project root:
-
-
-
-```powershell
-
+```bash
 cd frontend
-
 npm install
-
 npm run dev
-
 ```
 
+Vite will display the local development URL in the terminal.
 
+> Database migrations and environment configuration must be completed before running the application against a new database.
 
-Frontend: `http://localhost:5173`
+## Development Philosophy
 
+HACKPRENEUR is being built with a few principles in mind:
 
+1. **Security by design** — Access should be explicit, scoped, and auditable.
+2. **Ownership matters** — Projects and contributions should not disappear when an event ends.
+3. **Modular architecture** — Features should evolve without making the entire platform tightly coupled.
+4. **Practical engineering** — Build useful functionality before adding unnecessary complexity.
+5. **Long-term thinking** — The platform should support projects beyond the short lifecycle of a hackathon.
 
-\## Current API Endpoints
+## Roadmap
 
+- [x] Authentication foundation
+- [x] Secure project backend
+- [x] Frontend API integration
+- [ ] GitHub App integration
+- [ ] Team management and collaboration
+- [ ] Hackathon and event workflows
+- [ ] Mentor and judge workflows
+- [ ] Project evaluation and feedback
+- [ ] AI-assisted project development
+- [ ] Production deployment and scalability
 
+## Contributing
 
-| Method | Endpoint | Description |
+HACKPRENEUR is currently evolving through active development.
 
-|---|---|---|
+Suggestions, discussions, and constructive feedback are welcome. Please open an issue to discuss a substantial change before submitting a pull request.
 
-| GET | `/` | Welcome message |
+## The Bigger Picture
 
-| GET | `/api/health` | API health check |
+The goal isn't simply to help people participate in more hackathons.
 
-| POST | `/api/projects` | Create a project |
+It's to help them do something meaningful with what they build.
 
-| GET | `/api/projects` | Retrieve projects |
+**Build. Collaborate. Continue.**
 
+---
 
+<p align="center">
+  <strong>HACKPRENEUR</strong>
+  <br />
+  Turning short-term hackathon energy into long-term innovation.
+</p>
 
-\## Database
-
-
-
-HACKPRENEUR currently uses SQLite with SQLAlchemy. The database is initialized using `backend/init\_db.py`.
-
-
-
-The local database file is excluded from Git and is recreated when the initialization script runs.
-
-
-
-\## Project Status
-
-
-
-This project is under active development. Features and architecture may change as development progresses.
-
+<p align="center">
+  <a href="https://github.com/Adityadevhare">GitHub</a>
+  ·
+  <a href="https://github.com/Adityadevhare/hackpreneur">Repository</a>
+</p>
