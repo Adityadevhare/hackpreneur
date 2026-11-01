@@ -1,13 +1,42 @@
-
+import os
 from datetime import datetime
+from typing import Any
 
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from database import SessionLocal
+from auth import get_current_user, AuthenticatedUser
+from database import SessionLocal, get_db
 from models import Project
+
+
+DEFAULT_CORS_ALLOWED_ORIGINS = (
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+)
+
+
+def load_cors_allowed_origins() -> list[str]:
+    """Load explicitly allowed CORS origins from the environment."""
+    configured_origins = os.getenv("CORS_ALLOWED_ORIGINS", "")
+    if not configured_origins.strip():
+        return list(DEFAULT_CORS_ALLOWED_ORIGINS)
+
+    origins = [
+        origin.strip()
+        for origin in configured_origins.split(",")
+        if origin.strip()
+    ]
+    if not origins:
+        return list(DEFAULT_CORS_ALLOWED_ORIGINS)
+    if "*" in origins:
+        raise ValueError(
+            "CORS_ALLOWED_ORIGINS must not contain wildcard origins."
+        )
+    return origins
 
 
 app = FastAPI(
@@ -20,20 +49,11 @@ app = FastAPI(
 # CORS configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=load_cors_allowed_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-# Database session dependency
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 
 # Request schema
@@ -60,6 +80,15 @@ class ProjectResponse(BaseModel):
     created_at: datetime
 
 
+# Authenticated user response schema
+class UserResponse(BaseModel):
+    id: str
+    email: str | None = None
+    role: str | None = None
+    app_metadata: dict[str, Any] = Field(default_factory=dict)
+    user_metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 # Welcome endpoint
 @app.get("/")
 def root():
@@ -68,13 +97,52 @@ def root():
     }
 
 
-# Health check
+# Health check verifying PostgreSQL connection without exposing credentials
 @app.get("/api/health")
-def health_check():
+def health_check(db: Session = Depends(get_db)):
+    db_status = "connected"
+    try:
+        db.execute(text("SELECT 1"))
+    except Exception:
+        db_status = "disconnected"
+
     return {
-        "status": "healthy",
-        "application": "HACKPRENEUR"
+        "status": "healthy" if db_status == "connected" else "degraded",
+        "application": "HACKPRENEUR",
+        "database": db_status
     }
+
+
+# Dedicated database connectivity check
+@app.get("/api/health/db")
+def db_health_check(db: Session = Depends(get_db)):
+    try:
+        db.execute(text("SELECT 1"))
+        return {
+            "status": "healthy",
+            "database": "postgresql",
+            "connected": True
+        }
+    except Exception:
+        return {
+            "status": "unhealthy",
+            "database": "postgresql",
+            "connected": False
+        }
+
+
+# Protected user profile endpoint verifying Supabase JWT
+@app.get("/api/auth/me", response_model=UserResponse)
+def get_current_user_profile(
+    current_user: AuthenticatedUser = Depends(get_current_user)
+):
+    return UserResponse(
+        id=current_user.id,
+        email=current_user.email,
+        role=current_user.role,
+        app_metadata=current_user.app_metadata,
+        user_metadata=current_user.user_metadata,
+    )
 
 
 # Create a project
@@ -98,6 +166,8 @@ def create_project(
 
     return new_project
 
+
+# Retrieve all projects
 @app.get("/api/projects", response_model=list[ProjectResponse])
 def get_projects(db: Session = Depends(get_db)):
     projects = db.query(Project).order_by(Project.created_at.desc()).all()

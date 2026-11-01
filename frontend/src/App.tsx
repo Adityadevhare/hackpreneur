@@ -3,6 +3,8 @@ import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 
 import "./App.css";
+import { useAuth } from "./auth/auth-context";
+import AuthScreen from "./auth/AuthScreen";
 
 // Backend health response
 interface HealthResponse {
@@ -22,10 +24,14 @@ interface Project {
   created_at: string;
 }
 
-function App() {
+function Dashboard() {
+  const { user, signOut, error: authError } = useAuth();
+
   // Application state
   const [backend, setBackend] = useState<HealthResponse | null>(null);
   const [darkMode, setDarkMode] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
+  const [signOutError, setSignOutError] = useState<string | null>(null);
 
   // Projects state
   const [projects, setProjects] = useState<Project[]>([]);
@@ -40,6 +46,13 @@ function App() {
   // Selected project state
   const [selectedProject, setSelectedProject] =
     useState<Project | null>(null);
+
+  const userEmail = user?.email?.trim();
+  const displayEmail = userEmail || "Signed-in user";
+  const avatarInitial = userEmail?.charAt(0).toUpperCase() || "U";
+  const signOutErrorMessage =
+    signOutError ??
+    (authError ? "Unable to sign out. Please try again." : null);
 
   // Create a new project
   const handleCreateProject = async (event: FormEvent<HTMLFormElement>) => {
@@ -92,6 +105,19 @@ function App() {
   // Return to dashboard
   const handleBackToDashboard = () => {
     setSelectedProject(null);
+  };
+
+  const handleSignOut = async () => {
+    setSignOutError(null);
+    setSigningOut(true);
+
+    try {
+      await signOut();
+    } catch {
+      setSignOutError("Unable to sign out. Please try again.");
+    } finally {
+      setSigningOut(false);
+    }
   };
 
   // Check backend connection
@@ -159,13 +185,43 @@ function App() {
 
         <div className="sidebar-bottom">
           <div className="user-profile">
-            <div className="avatar">A</div>
+            <div className="avatar">{avatarInitial}</div>
 
-            <div>
-              <strong>Project Builder</strong>
+            <div style={{ minWidth: 0 }}>
+              <strong
+                title={displayEmail}
+                style={{
+                  display: "block",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {displayEmail}
+              </strong>
               <span>Workspace</span>
             </div>
           </div>
+
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={handleSignOut}
+            disabled={signingOut}
+            style={{ width: "100%", marginTop: 8 }}
+          >
+            {signingOut ? "Signing out..." : "Sign out"}
+          </button>
+
+          {signOutErrorMessage && (
+            <p
+              className="form-error"
+              role="alert"
+              style={{ marginTop: 8, marginBottom: 0 }}
+            >
+              {signOutErrorMessage}
+            </p>
+          )}
         </div>
       </aside>
 
@@ -544,6 +600,41 @@ function App() {
       )}
     </div>
   );
+}
+
+function App() {
+  const { status } = useAuth();
+
+  if (status === "loading") {
+    return (
+      <div className="app">
+        <main
+          className="main-content"
+          role="status"
+          style={{
+            minHeight: "100vh",
+            display: "grid",
+            placeItems: "center",
+            padding: "24px",
+          }}
+        >
+          <div
+            className="panel"
+            style={{ width: "100%", maxWidth: 360, textAlign: "center" }}
+          >
+            <h2>Loading workspace...</h2>
+            <p>Checking your session.</p>
+          </div>
+        </main>
+      </div>
+    );
+  }
+
+  if (status === "unauthenticated") {
+    return <AuthScreen />;
+  }
+
+  return <Dashboard />;
 }
 
 export default App;

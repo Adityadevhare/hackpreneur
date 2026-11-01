@@ -1,8 +1,25 @@
+"""
+Database initialization module for HACKPRENEUR.
+Database migrations are version-controlled and applied via Alembic.
+Run: alembic upgrade head
+"""
+import subprocess
+import sys
+from pathlib import Path
 
-from database import Base, engine
-import models
 
-# Create all tables defined in models.py
-Base.metadata.create_all(bind=engine)
+def init():
+    backend_dir = Path(__file__).resolve().parent
+    print("Applying Alembic migrations...")
+    result = subprocess.run(
+        [sys.executable, "-m", "alembic", "upgrade", "head"],
+        cwd=str(backend_dir)
+    )
+    if result.returncode == 0:
+        print("HACKPRENEUR database initialized successfully via Alembic!")
+    else:
+        print("Alembic migration failed.")
 
-print("HACKPRENEUR database initialized successfully!")
+
+if __name__ == "__main__":
+    init()
