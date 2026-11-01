@@ -231,3 +231,95 @@ export async function apiRequest<T>(
 
   return payload as T;
 }
+
+// ---------------------------------------------------------------------------
+// Typed Domain Interfaces matching backend schemas
+// ---------------------------------------------------------------------------
+
+export interface HealthResponse {
+  status: string;
+  application: string;
+  database?: string;
+}
+
+export type ProjectVisibility = "private" | "unlisted" | "public";
+
+export interface Project {
+  id: number;
+  name: string;
+  hackathon_name: string;
+  problem_statement: string;
+  description: string;
+  tech_stack: string;
+  development_stage: string;
+  visibility: ProjectVisibility;
+  owner_id?: string | null;
+  owner_type?: string | null;
+  creator_id?: string | null;
+  unlisted_token?: string | null;
+  created_at: string;
+  updated_at?: string | null;
+  deleted_at?: string | null;
+}
+
+export interface ProjectCreateData {
+  name: string;
+  hackathon_name: string;
+  problem_statement: string;
+  description: string;
+  tech_stack: string;
+  development_stage: string;
+  visibility?: ProjectVisibility;
+}
+
+export interface ProjectUpdateData {
+  name?: string;
+  hackathon_name?: string;
+  problem_statement?: string;
+  description?: string;
+  tech_stack?: string;
+  development_stage?: string;
+  visibility?: ProjectVisibility;
+}
+
+// ---------------------------------------------------------------------------
+// Authenticated Projects API Service
+// ---------------------------------------------------------------------------
+
+export const projectsApi = {
+  getHealth: () =>
+    apiRequest<HealthResponse>("/api/health", { skipAuth: true }),
+
+  list: () =>
+    apiRequest<Project[]>("/api/projects"),
+
+  get: (id: number, token?: string) =>
+    apiRequest<Project>(
+      `/api/projects/${id}${token ? `?token=${encodeURIComponent(token)}` : ""}`,
+    ),
+
+  getByToken: (token: string) =>
+    apiRequest<Project>(`/api/projects/unlisted/${encodeURIComponent(token)}`),
+
+  create: (data: ProjectCreateData) =>
+    apiRequest<Project>("/api/projects", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  update: (id: number, data: ProjectUpdateData) =>
+    apiRequest<Project>(`/api/projects/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+
+  delete: (id: number) =>
+    apiRequest<{ detail: string }>(`/api/projects/${id}`, {
+      method: "DELETE",
+    }),
+
+  restore: (id: number) =>
+    apiRequest<Project>(`/api/projects/${id}/restore`, {
+      method: "POST",
+    }),
+};

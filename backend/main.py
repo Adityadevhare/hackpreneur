@@ -1,15 +1,18 @@
 import os
+import secrets
+import uuid
 from datetime import datetime
 from typing import Any
 
-from fastapi import FastAPI, Depends
+from fastapi import FastAPI, Depends, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import text
+from sqlalchemy import text, or_
 from sqlalchemy.orm import Session
+from sqlalchemy.sql import func
 
 from auth import get_current_user, AuthenticatedUser
-from database import SessionLocal, get_db
+from database import get_db, set_request_context
 from models import Project
 
 
@@ -56,7 +59,7 @@ app.add_middleware(
 )
 
 
-# Request schema
+# Request schemas
 class ProjectCreate(BaseModel):
     name: str = Field(min_length=2, max_length=150)
     hackathon_name: str = Field(min_length=2, max_length=150)
@@ -64,6 +67,21 @@ class ProjectCreate(BaseModel):
     description: str
     tech_stack: str
     development_stage: str
+    visibility: str = Field(
+        default="private",
+        pattern="^(private|unlisted|public)$",
+        description="Default visibility is private. Only explicit opt-in makes a project public or unlisted."
+    )
+
+
+class ProjectUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=2, max_length=150)
+    hackathon_name: str | None = Field(default=None, min_length=2, max_length=150)
+    problem_statement: str | None = None
+    description: str | None = None
+    tech_stack: str | None = None
+    development_stage: str | None = None
+    visibility: str | None = Field(default=None, pattern="^(private|unlisted|public)$")
 
 
 # Response schema
@@ -77,7 +95,14 @@ class ProjectResponse(BaseModel):
     description: str
     tech_stack: str
     development_stage: str
+    visibility: str
+    owner_id: uuid.UUID | None = None
+    owner_type: str | None = None
+    creator_id: uuid.UUID | None = None
+    unlisted_token: str | None = None
     created_at: datetime
+    updated_at: datetime | None = None
+    deleted_at: datetime | None = None
 
 
 # Authenticated user response schema
@@ -145,19 +170,38 @@ def get_current_user_profile(
     )
 
 
-# Create a project
-@app.post("/api/projects", response_model=ProjectResponse, status_code=201)
+def sanitize_project_response(project: Project, current_user_id: uuid.UUID | None) -> Project:
+    """Mask sensitive tokens (such as unlisted_token) for non-owners."""
+    if project.owner_id != current_user_id:
+        project.unlisted_token = None
+    return project
+
+
+# Create a project - requires authenticated user, defaults to private
+@app.post("/api/projects", response_model=ProjectResponse, status_code=status.HTTP_201_CREATED)
 def create_project(
     project_data: ProjectCreate,
+    current_user: AuthenticatedUser = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
+    user_uuid = uuid.UUID(current_user.id)
+    set_request_context(db, user_id=str(user_uuid))
+
+    # Generate non-guessable secure token for unlisted sharing
+    unlisted_token = secrets.token_urlsafe(32)
+
     new_project = Project(
         name=project_data.name,
         hackathon_name=project_data.hackathon_name,
         problem_statement=project_data.problem_statement,
         description=project_data.description,
         tech_stack=project_data.tech_stack,
-        development_stage=project_data.development_stage
+        development_stage=project_data.development_stage,
+        visibility=project_data.visibility,
+        owner_id=user_uuid,
+        owner_type="individual",
+        creator_id=user_uuid,
+        unlisted_token=unlisted_token
     )
 
     db.add(new_project)
@@ -167,8 +211,241 @@ def create_project(
     return new_project
 
 
-# Retrieve all projects
+# Retrieve all accessible projects for authenticated user
 @app.get("/api/projects", response_model=list[ProjectResponse])
-def get_projects(db: Session = Depends(get_db)):
-    projects = db.query(Project).order_by(Project.created_at.desc()).all()
+def get_projects(
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    user_uuid = uuid.UUID(current_user.id)
+    set_request_context(db, user_id=str(user_uuid))
+
+    # Filter: exclude soft-deleted, include owned, created, or public projects
+    projects = (
+        db.query(Project)
+        .filter(
+            Project.deleted_at.is_(None),
+            or_(
+                Project.owner_id == user_uuid,
+                Project.creator_id == user_uuid,
+                Project.visibility == "public"
+            )
+        )
+        .order_by(Project.created_at.desc())
+        .all()
+    )
+
+    for p in projects:
+        sanitize_project_response(p, user_uuid)
+
     return projects
+
+
+# Access unlisted project via authorized non-guessable token
+@app.get("/api/projects/unlisted/{unlisted_token}", response_model=ProjectResponse)
+def get_unlisted_project(
+    unlisted_token: str,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    user_uuid = uuid.UUID(current_user.id)
+    set_request_context(db, user_id=str(user_uuid), unlisted_token=unlisted_token)
+
+    project = (
+        db.query(Project)
+        .filter(
+            Project.unlisted_token == unlisted_token,
+            Project.visibility == "unlisted",
+            Project.deleted_at.is_(None)
+        )
+        .first()
+    )
+
+    if not project:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Project not found"
+        )
+
+    return sanitize_project_response(project, user_uuid)
+
+
+# Retrieve a single project by ID
+@app.get("/api/projects/{project_id}", response_model=ProjectResponse)
+def get_project(
+    project_id: int,
+    token: str | None = Query(default=None, description="Access token for unlisted projects"),
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    user_uuid = uuid.UUID(current_user.id)
+    set_request_context(db, user_id=str(user_uuid), unlisted_token=token)
+
+    project = (
+        db.query(Project)
+        .filter(
+            Project.id == project_id,
+            Project.deleted_at.is_(None)
+        )
+        .first()
+    )
+
+    if not project:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Project not found"
+        )
+
+    # Permission check:
+    # 1. Owner or creator can always view
+    # 2. Public project viewable by any authenticated user
+    # 3. Unlisted project viewable with valid token
+    is_owner_or_creator = (project.owner_id == user_uuid) or (project.creator_id == user_uuid)
+    is_public = (project.visibility == "public")
+    is_authorized_unlisted = (
+        project.visibility == "unlisted"
+        and token is not None
+        and secrets.compare_digest(token, project.unlisted_token or "")
+    )
+
+    if not (is_owner_or_creator or is_public or is_authorized_unlisted):
+        # Fail closed with 404 to prevent ID enumeration
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Project not found"
+        )
+
+    return sanitize_project_response(project, user_uuid)
+
+
+# Update a project - owner only, permanent creator attribution preserved
+@app.patch("/api/projects/{project_id}", response_model=ProjectResponse)
+@app.put("/api/projects/{project_id}", response_model=ProjectResponse)
+def update_project(
+    project_id: int,
+    project_data: ProjectUpdate,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    user_uuid = uuid.UUID(current_user.id)
+    set_request_context(db, user_id=str(user_uuid))
+
+    project = (
+        db.query(Project)
+        .filter(
+            Project.id == project_id,
+            Project.deleted_at.is_(None)
+        )
+        .first()
+    )
+
+    if not project:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Project not found"
+        )
+
+    # Only verified owner may modify the project
+    if project.owner_id != user_uuid:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have permission to modify this project"
+        )
+
+    update_dict = project_data.model_dump(exclude_unset=True)
+    for field, value in update_dict.items():
+        if value is not None:
+            setattr(project, field, value)
+
+    # If visibility transitioned to unlisted and token is missing, generate one
+    if project.visibility == "unlisted" and not project.unlisted_token:
+        project.unlisted_token = secrets.token_urlsafe(32)
+
+    project.updated_at = func.now()
+
+    db.commit()
+    db.refresh(project)
+
+    return project
+
+
+# Soft delete a project - owner only
+@app.delete("/api/projects/{project_id}")
+def delete_project(
+    project_id: int,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    user_uuid = uuid.UUID(current_user.id)
+    set_request_context(db, user_id=str(user_uuid))
+
+    project = (
+        db.query(Project)
+        .filter(
+            Project.id == project_id,
+            Project.deleted_at.is_(None)
+        )
+        .first()
+    )
+
+    if not project:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Project not found"
+        )
+
+    # Only verified owner may delete the project
+    if project.owner_id != user_uuid:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have permission to delete this project"
+        )
+
+    project.deleted_at = func.now()
+    project.deleted_by = user_uuid
+
+    db.commit()
+
+    return {"detail": "Project deleted successfully"}
+
+
+# Restore a soft-deleted project - owner only
+@app.post("/api/projects/{project_id}/restore", response_model=ProjectResponse)
+def restore_project(
+    project_id: int,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    user_uuid = uuid.UUID(current_user.id)
+    set_request_context(db, user_id=str(user_uuid))
+
+    project = (
+        db.query(Project)
+        .filter(
+            Project.id == project_id,
+            Project.deleted_at.is_not(None)
+        )
+        .first()
+    )
+
+    if not project:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Deleted project not found"
+        )
+
+    # Only verified owner may restore the project
+    if project.owner_id != user_uuid:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have permission to restore this project"
+        )
+
+    project.deleted_at = None
+    project.deleted_by = None
+    project.updated_at = func.now()
+
+    db.commit()
+    db.refresh(project)
+
+    return project

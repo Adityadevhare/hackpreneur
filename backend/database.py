@@ -1,8 +1,10 @@
 import os
 from pathlib import Path
 from dotenv import load_dotenv
-from sqlalchemy import create_engine
-from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlalchemy import create_engine, text
+from sqlalchemy.orm import Session, sessionmaker
+
+from base import Base  # Re-export Base for backward compatibility
 
 # Load environment variables securely from backend/.env
 BASE_DIR = Path(__file__).resolve().parent
@@ -31,8 +33,28 @@ SessionLocal = sessionmaker(
     bind=engine
 )
 
-# Base class for declarative database models
-Base = declarative_base()
+
+def set_request_context(
+    session: Session,
+    user_id: str | None = None,
+    unlisted_token: str | None = None
+) -> None:
+    """
+    Establish transaction-local trusted user context for PostgreSQL RLS.
+
+    Uses set_config(..., is_local=true), which guarantees the setting is
+    strictly scoped to the active transaction and automatically clears on
+    commit or rollback, preventing context leakage across pooled connections.
+    """
+    bind = session.get_bind()
+    if bind is not None and bind.dialect.name == "postgresql":
+        session.execute(
+            text(
+                "SELECT set_config('app.current_user_id', :user_id, true), "
+                "set_config('app.unlisted_token', :token, true)"
+            ),
+            {"user_id": str(user_id) if user_id else "", "token": str(unlisted_token) if unlisted_token else ""}
+        )
 
 
 def get_db():

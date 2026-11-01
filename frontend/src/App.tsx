@@ -1,28 +1,16 @@
-
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { FormEvent } from "react";
 
 import "./App.css";
 import { useAuth } from "./auth/auth-context";
 import AuthScreen from "./auth/AuthScreen";
-
-// Backend health response
-interface HealthResponse {
-  status: string;
-  application: string;
-}
-
-// Project data structure
-interface Project {
-  id: number;
-  name: string;
-  hackathon_name: string;
-  problem_statement: string;
-  description: string;
-  tech_stack: string;
-  development_stage: string;
-  created_at: string;
-}
+import { projectsApi } from "./lib/api";
+import type {
+  HealthResponse,
+  Project,
+  ProjectCreateData,
+  ProjectVisibility,
+} from "./lib/api";
 
 function Dashboard() {
   const { user, signOut, error: authError } = useAuth();
@@ -37,6 +25,7 @@ function Dashboard() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [projectsLoading, setProjectsLoading] = useState(true);
   const [projectsError, setProjectsError] = useState<string | null>(null);
+  const [reloadTrigger, setReloadTrigger] = useState(0);
 
   // Create project modal state
   const [showCreateForm, setShowCreateForm] = useState(false);
@@ -44,8 +33,10 @@ function Dashboard() {
   const [formError, setFormError] = useState<string | null>(null);
 
   // Selected project state
-  const [selectedProject, setSelectedProject] =
-    useState<Project | null>(null);
+  const [selectedProject, setSelectedProject] = useState<Project | null>(null);
+  const [actionLoading, setActionLoading] = useState(false);
+  const [detailError, setDetailError] = useState<string | null>(null);
+  const [copiedLink, setCopiedLink] = useState(false);
 
   const userEmail = user?.email?.trim();
   const displayEmail = userEmail || "Signed-in user";
@@ -54,7 +45,82 @@ function Dashboard() {
     signOutError ??
     (authError ? "Unable to sign out. Please try again." : null);
 
-  // Create a new project
+  const reloadProjects = useCallback(() => {
+    setProjectsLoading(true);
+    setReloadTrigger((count) => count + 1);
+  }, []);
+
+  // Check backend health (unauthenticated probe)
+  useEffect(() => {
+    let isMounted = true;
+
+    projectsApi
+      .getHealth()
+      .then((data) => {
+        if (isMounted) setBackend(data);
+      })
+      .catch(() => {
+        if (isMounted) setBackend(null);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  // Load accessible projects using authenticated API client
+  useEffect(() => {
+    let isMounted = true;
+
+    projectsApi
+      .list()
+      .then((data) => {
+        if (isMounted) {
+          setProjects(data);
+          setProjectsError(null);
+        }
+      })
+      .catch((error: unknown) => {
+        if (isMounted) {
+          setProjectsError(
+            error instanceof Error ? error.message : "Failed to load projects",
+          );
+        }
+      })
+      .finally(() => {
+        if (isMounted) {
+          setProjectsLoading(false);
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [reloadTrigger]);
+
+  // Check for unlisted token in URL query string on load
+  useEffect(() => {
+    const token = new URLSearchParams(window.location.search).get("token");
+    if (!token) return;
+
+    let isMounted = true;
+    projectsApi
+      .getByToken(token)
+      .then((project) => {
+        if (isMounted) {
+          setSelectedProject(project);
+        }
+      })
+      .catch((err) => {
+        console.debug("Unlisted project link resolution failed:", err);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  // Create a new project via authenticated API client
   const handleCreateProject = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
@@ -63,48 +129,123 @@ function Dashboard() {
 
     const formData = new FormData(event.currentTarget);
 
-    const projectData = {
-      name: formData.get("name") as string,
-      hackathon_name: formData.get("hackathon_name") as string,
-      problem_statement: formData.get("problem_statement") as string,
-      description: formData.get("description") as string,
-      tech_stack: formData.get("tech_stack") as string,
-      development_stage: formData.get("development_stage") as string,
+    const projectData: ProjectCreateData = {
+      name: (formData.get("name") as string)?.trim() || "",
+      hackathon_name: (formData.get("hackathon_name") as string)?.trim() || "",
+      problem_statement: (formData.get("problem_statement") as string)?.trim() || "",
+      description: (formData.get("description") as string)?.trim() || "",
+      tech_stack: (formData.get("tech_stack") as string)?.trim() || "",
+      development_stage:
+        (formData.get("development_stage") as string) || "Prototype",
+      visibility:
+        (formData.get("visibility") as ProjectVisibility) || "private",
     };
 
     try {
-      const response = await fetch("http://127.0.0.1:8000/api/projects", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(projectData),
-      });
-
-      if (!response.ok) {
-        throw new Error("Failed to create project");
-      }
-
-      const newProject: Project = await response.json();
-
-      setProjects((currentProjects) => [
-        newProject,
-        ...currentProjects,
-      ]);
-
+      const newProject = await projectsApi.create(projectData);
+      setProjects((currentProjects) => [newProject, ...currentProjects]);
       setShowCreateForm(false);
     } catch (error) {
       setFormError(
-        error instanceof Error ? error.message : "Something went wrong"
+        error instanceof Error ? error.message : "Failed to create project",
       );
     } finally {
       setFormSubmitting(false);
     }
   };
 
-  // Return to dashboard
+  // Select project and refresh from server for latest state
+  const handleSelectProject = async (project: Project) => {
+    setSelectedProject(project);
+    setDetailError(null);
+
+    try {
+      const fresh = await projectsApi.get(project.id);
+      setSelectedProject(fresh);
+    } catch (err) {
+      console.debug("Background project refresh failed:", err);
+    }
+  };
+
+  // Return to dashboard overview
   const handleBackToDashboard = () => {
     setSelectedProject(null);
+    setDetailError(null);
+    setCopiedLink(false);
+  };
+
+  // Delete project (owner only)
+  const handleDeleteProject = async (projectId: number) => {
+    if (
+      !window.confirm(
+        "Are you sure you want to delete this project? It will be archived and hidden.",
+      )
+    ) {
+      return;
+    }
+
+    setActionLoading(true);
+    setDetailError(null);
+
+    try {
+      await projectsApi.delete(projectId);
+      setProjects((current) => current.filter((p) => p.id !== projectId));
+      setSelectedProject(null);
+    } catch (err) {
+      setDetailError(
+        err instanceof Error ? err.message : "Failed to delete project",
+      );
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  // Update development stage (owner only)
+  const handleUpdateStage = async (newStage: string) => {
+    if (!selectedProject) return;
+
+    setActionLoading(true);
+    setDetailError(null);
+
+    try {
+      const updated = await projectsApi.update(selectedProject.id, {
+        development_stage: newStage,
+      });
+      setSelectedProject(updated);
+      setProjects((current) =>
+        current.map((p) => (p.id === updated.id ? updated : p)),
+      );
+    } catch (err) {
+      setDetailError(
+        err instanceof Error ? err.message : "Failed to update project stage",
+      );
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  // Update visibility (owner only)
+  const handleUpdateVisibility = async (newVisibility: ProjectVisibility) => {
+    if (!selectedProject) return;
+
+    setActionLoading(true);
+    setDetailError(null);
+
+    try {
+      const updated = await projectsApi.update(selectedProject.id, {
+        visibility: newVisibility,
+      });
+      setSelectedProject(updated);
+      setProjects((current) =>
+        current.map((p) => (p.id === updated.id ? updated : p)),
+      );
+    } catch (err) {
+      setDetailError(
+        err instanceof Error ? err.message : "Failed to update visibility",
+      );
+    } finally {
+      setActionLoading(false);
+    }
   };
 
   const handleSignOut = async () => {
@@ -120,41 +261,13 @@ function Dashboard() {
     }
   };
 
-  // Check backend connection
-  useEffect(() => {
-    fetch("http://127.0.0.1:8000/api/health")
-      .then((response) => {
-        if (!response.ok) {
-          throw new Error("Backend unavailable");
-        }
-
-        return response.json();
-      })
-      .then((data: HealthResponse) => setBackend(data))
-      .catch(() => setBackend(null));
-  }, []);
-
-  // Fetch all projects
-  useEffect(() => {
-    fetch("http://127.0.0.1:8000/api/projects")
-      .then((response) => {
-        if (!response.ok) {
-          throw new Error("Failed to fetch projects");
-        }
-
-        return response.json();
-      })
-      .then((data: Project[]) => {
-        setProjects(data);
-        setProjectsError(null);
-      })
-      .catch((error: Error) => {
-        setProjectsError(error.message);
-      })
-      .finally(() => {
-        setProjectsLoading(false);
-      });
-  }, []);
+  // Check if current user is the verified owner of the selected project
+  const isOwner = Boolean(
+    selectedProject &&
+      user?.id &&
+      selectedProject.owner_id &&
+      selectedProject.owner_id === user.id,
+  );
 
   return (
     <div className={`app ${darkMode ? "dark" : "light"}`}>
@@ -247,6 +360,21 @@ function Dashboard() {
                   {darkMode ? "Light mode" : "Dark mode"}
                 </button>
 
+                {isOwner && (
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    style={{
+                      color: "var(--danger)",
+                      borderColor: "rgba(239, 68, 68, 0.3)",
+                    }}
+                    onClick={() => handleDeleteProject(selectedProject.id)}
+                    disabled={actionLoading}
+                  >
+                    {actionLoading ? "Deleting..." : "Delete Project"}
+                  </button>
+                )}
+
                 <button
                   className="secondary-button"
                   onClick={handleBackToDashboard}
@@ -259,18 +387,48 @@ function Dashboard() {
             <div className="details-panel">
               <div className="details-heading">
                 <div>
-                  <span className="details-label">
-                    PROJECT OVERVIEW
-                  </span>
+                  <span className="details-label">PROJECT OVERVIEW</span>
 
                   <h2>{selectedProject.name}</h2>
                   <p>{selectedProject.hackathon_name}</p>
                 </div>
 
-                <span className="details-stage">
-                  {selectedProject.development_stage}
-                </span>
+                <div
+                  style={{
+                    display: "flex",
+                    gap: 8,
+                    alignItems: "center",
+                    flexWrap: "wrap",
+                  }}
+                >
+                  <span className="details-stage">
+                    {selectedProject.development_stage}
+                  </span>
+
+                  <span
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      padding: "6px 10px",
+                      border: "1px solid var(--border)",
+                      borderRadius: "var(--radius-sm)",
+                      background: "var(--surface-subtle)",
+                      color: "var(--text-secondary)",
+                      fontSize: 11,
+                      fontWeight: 650,
+                      textTransform: "capitalize",
+                    }}
+                  >
+                    {selectedProject.visibility || "private"}
+                  </span>
+                </div>
               </div>
+
+              {detailError && (
+                <p className="form-error" role="alert" style={{ marginBottom: 16 }}>
+                  {detailError}
+                </p>
+              )}
 
               <div className="details-section">
                 <h3>Problem Statement</h3>
@@ -286,6 +444,134 @@ function Dashboard() {
                 <h3>Technology Stack</h3>
                 <p>{selectedProject.tech_stack}</p>
               </div>
+
+              {/* Unlisted sharing link for project owner */}
+              {selectedProject.visibility === "unlisted" &&
+                selectedProject.unlisted_token && (
+                  <div className="details-section">
+                    <h3>Unlisted Share Link</h3>
+                    <p
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 10,
+                        flexWrap: "wrap",
+                      }}
+                    >
+                      <code
+                        style={{
+                          padding: "6px 10px",
+                          background: "var(--surface-subtle)",
+                          border: "1px solid var(--border)",
+                          borderRadius: "var(--radius-sm)",
+                          fontSize: 11,
+                          color: "var(--accent)",
+                        }}
+                      >
+                        {`${window.location.origin}/?token=${selectedProject.unlisted_token}`}
+                      </code>
+
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        style={{ minHeight: 30, padding: "0 10px", fontSize: 11 }}
+                        onClick={() => {
+                          void navigator.clipboard.writeText(
+                            `${window.location.origin}/?token=${selectedProject.unlisted_token}`,
+                          );
+                          setCopiedLink(true);
+                          setTimeout(() => setCopiedLink(false), 2000);
+                        }}
+                      >
+                        {copiedLink ? "Copied!" : "Copy Link"}
+                      </button>
+                    </p>
+                  </div>
+                )}
+
+              {/* Settings controls for project owner */}
+              {isOwner && (
+                <div className="details-section">
+                  <h3>Project Settings</h3>
+                  <div
+                    style={{
+                      display: "flex",
+                      gap: 20,
+                      flexWrap: "wrap",
+                      alignItems: "center",
+                    }}
+                  >
+                    <div>
+                      <label
+                        style={{
+                          display: "block",
+                          fontSize: 11,
+                          color: "var(--text-muted)",
+                          marginBottom: 6,
+                          fontWeight: 600,
+                        }}
+                      >
+                        Development Stage
+                      </label>
+                      <select
+                        value={selectedProject.development_stage}
+                        onChange={(e) => void handleUpdateStage(e.target.value)}
+                        disabled={actionLoading}
+                        style={{
+                          minHeight: 34,
+                          padding: "0 10px",
+                          border: "1px solid var(--border-strong)",
+                          borderRadius: "var(--radius-sm)",
+                          background: "var(--surface-subtle)",
+                          color: "var(--text-primary)",
+                          fontSize: 12,
+                        }}
+                      >
+                        <option value="Idea">Idea</option>
+                        <option value="Prototype">Prototype</option>
+                        <option value="MVP">MVP</option>
+                        <option value="Launched">Launched</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label
+                        style={{
+                          display: "block",
+                          fontSize: 11,
+                          color: "var(--text-muted)",
+                          marginBottom: 6,
+                          fontWeight: 600,
+                        }}
+                      >
+                        Visibility
+                      </label>
+                      <select
+                        value={selectedProject.visibility}
+                        onChange={(e) =>
+                          void handleUpdateVisibility(
+                            e.target.value as ProjectVisibility,
+                          )
+                        }
+                        disabled={actionLoading}
+                        style={{
+                          minHeight: 34,
+                          padding: "0 10px",
+                          border: "1px solid var(--border-strong)",
+                          borderRadius: "var(--radius-sm)",
+                          background: "var(--surface-subtle)",
+                          color: "var(--text-primary)",
+                          fontSize: 12,
+                        }}
+                      >
+                        <option value="private">Private</option>
+                        <option value="unlisted">Unlisted</option>
+                        <option value="public">Public</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               <div className="analysis-entry">
                 <div>
@@ -308,9 +594,7 @@ function Dashboard() {
           <>
             <header className="topbar">
               <div>
-                <span className="breadcrumb">
-                  Workspace / Overview
-                </span>
+                <span className="breadcrumb">Workspace / Overview</span>
 
                 <h1>Overview</h1>
               </div>
@@ -391,12 +675,20 @@ function Dashboard() {
                 {projectsLoading ? (
                   <div className="empty-state">
                     <h3>Loading projects...</h3>
-                    <p>Fetching your projects from the database.</p>
+                    <p>Fetching your projects securely from the database.</p>
                   </div>
                 ) : projectsError ? (
                   <div className="empty-state">
                     <h3>Unable to load projects</h3>
-                    <p>{projectsError}</p>
+                    <p role="alert">{projectsError}</p>
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      onClick={reloadProjects}
+                      style={{ marginTop: 12 }}
+                    >
+                      Try again
+                    </button>
                   </div>
                 ) : projects.length === 0 ? (
                   <div className="empty-state">
@@ -425,7 +717,7 @@ function Dashboard() {
                       <div
                         className="project-card"
                         key={project.id}
-                        onClick={() => setSelectedProject(project)}
+                        onClick={() => void handleSelectProject(project)}
                         role="button"
                         tabIndex={0}
                         onKeyDown={(event) => {
@@ -434,14 +726,48 @@ function Dashboard() {
                             event.key === " "
                           ) {
                             event.preventDefault();
-                            setSelectedProject(project);
+                            void handleSelectProject(project);
                           }
                         }}
                       >
                         <h3>{project.name}</h3>
                         <p>{project.hackathon_name}</p>
                         <p>{project.description}</p>
-                        <span>{project.development_stage}</span>
+                        <div
+                          style={{
+                            display: "flex",
+                            gap: 8,
+                            alignItems: "center",
+                            marginTop: 10,
+                          }}
+                        >
+                          <span
+                            style={{
+                              fontSize: 11,
+                              color: "var(--text-muted)",
+                            }}
+                          >
+                            {project.development_stage}
+                          </span>
+                          <span
+                            style={{
+                              fontSize: 10,
+                              color: "var(--border-strong)",
+                            }}
+                          >
+                            •
+                          </span>
+                          <span
+                            style={{
+                              fontSize: 11,
+                              color: "var(--accent)",
+                              textTransform: "capitalize",
+                              fontWeight: 600,
+                            }}
+                          >
+                            {project.visibility || "private"}
+                          </span>
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -501,7 +827,7 @@ function Dashboard() {
 
             <form
               className="project-form"
-              onSubmit={handleCreateProject}
+              onSubmit={(e) => void handleCreateProject(e)}
             >
               <div className="form-group">
                 <label>Project name</label>
@@ -573,8 +899,30 @@ function Dashboard() {
                 </select>
               </div>
 
+              <div className="form-group">
+                <label>Visibility</label>
+
+                <select
+                  name="visibility"
+                  required
+                  defaultValue="private"
+                >
+                  <option value="private">
+                    Private (Only you can access)
+                  </option>
+                  <option value="unlisted">
+                    Unlisted (Shareable via link)
+                  </option>
+                  <option value="public">
+                    Public (Visible to all hackathon members)
+                  </option>
+                </select>
+              </div>
+
               {formError && (
-                <p className="form-error">{formError}</p>
+                <p className="form-error" role="alert">
+                  {formError}
+                </p>
               )}
 
               <div className="form-actions">

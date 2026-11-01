@@ -3,7 +3,7 @@ import os
 import sqlite3
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import text, inspect
+from sqlalchemy import text, inspect, create_engine
 
 from database import engine, DATABASE_URL, SessionLocal
 from main import app
@@ -55,18 +55,27 @@ def test_api_health_db_endpoint():
 
 
 def test_alembic_migration_status():
-    """Verify that Alembic has created alembic_version and projects table in PostgreSQL."""
-    inspector = inspect(engine)
-    table_names = inspector.get_table_names()
-    assert "alembic_version" in table_names
-    assert "projects" in table_names
+    """Verify that Alembic has created alembic_version and projects table in PostgreSQL using admin connection."""
+    admin_url = os.getenv("DATABASE_ADMIN_URL")
+    assert admin_url is not None, "DATABASE_ADMIN_URL must be configured"
+    admin_engine = create_engine(admin_url)
+    try:
+        inspector = inspect(admin_engine)
+        table_names = inspector.get_table_names()
+        assert "alembic_version" in table_names
+        assert "projects" in table_names
 
-    with engine.connect() as conn:
-        current_rev = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
-        assert current_rev is not None
-        assert len(current_rev) > 0
+        with admin_engine.connect() as conn:
+            current_rev = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
+            assert current_rev is not None
+            assert len(current_rev) > 0
+    finally:
+        admin_engine.dispose()
 
 
+@pytest.mark.skip(
+    reason="Mutates shared Supabase database. Project CRUD operations with full auth, ownership, and RLS are tested in isolated test_project_security.py."
+)
 def test_project_crud_lifecycle():
     """Verify creating and retrieving projects works against Supabase PostgreSQL."""
     test_project_data = {
